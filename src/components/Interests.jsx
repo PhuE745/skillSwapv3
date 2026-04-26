@@ -14,21 +14,48 @@ function Interests() {
 
   const fetchCategoriesAndSkills = async () => {
     try {
-      const { data: categoriesData } = await supabase
+      // Fetch all skills
+      const { data: skillsData, error: skillsError } = await supabase
+        .from('skills')
+        .select('*')
+      
+      if (skillsError) {
+        console.error('Skills fetch error:', skillsError)
+      }
+      
+      console.log('Skills data from DB:', skillsData)
+      
+      // Fetch all categories
+      const { data: categoriesData, error: categoriesError } = await supabase
         .from('categories')
         .select('*')
         .order('display_order')
       
-      const { data: skillsData } = await supabase
-        .from('skills')
-        .select('*')
+      if (categoriesError) {
+        console.error('Categories fetch error:', categoriesError)
+      }
       
-      console.log('Skills data:', skillsData) // Debug: check if skills load
+      console.log('Categories data from DB:', categoriesData)
       
+      // Group skills by category
+      const skillsByCategory = {}
+      skillsData?.forEach(skill => {
+        const categoryName = skill.category
+        if (!skillsByCategory[categoryName]) {
+          skillsByCategory[categoryName] = []
+        }
+        skillsByCategory[categoryName].push(skill)
+      })
+      
+      console.log('Skills by category:', skillsByCategory)
+      
+      // Build categories with their skills
       const categoriesWithSkills = categoriesData?.map(cat => ({
         ...cat,
-        skills: skillsData?.filter(skill => skill.category === cat.name) || []
+        skills: skillsByCategory[cat.name] || []
       })) || []
+      
+      console.log('Final categories with skills:', categoriesWithSkills)
       
       setCategories(categoriesWithSkills)
     } catch (error) {
@@ -48,8 +75,6 @@ function Interests() {
       
       if (profile?.skills_wanted && profile.skills_wanted.length > 0) {
         setSelectedSkills(profile.skills_wanted)
-        // If already has interests, redirect to dashboard
-        window.location.href = '/dashboard'
       }
     }
   }
@@ -73,15 +98,25 @@ function Interests() {
     
     if (error) {
       console.error('Error saving:', error)
+      alert('Error saving interests: ' + error.message)
     } else {
+      alert('Interests saved successfully!')
       window.location.href = '/dashboard'
     }
     setSaving(false)
   }
 
-  const skipInterests = () => {
-    window.location.href = '/dashboard'
-  }
+  const skipInterests = async () => {
+  // Save an empty array when skipping
+  const { data: { user } } = await supabase.auth.getUser()
+  
+  await supabase
+    .from('profiles')
+    .update({ skills_wanted: [] })
+    .eq('id', user.id)
+  
+  if (onComplete) onComplete()
+}
 
   if (loading) {
     return <div style={styles.loading}>Loading...</div>
@@ -97,7 +132,7 @@ function Interests() {
       {categories.length === 0 ? (
         <div style={styles.noData}>
           <p>No categories or skills found in database.</p>
-          <p>Please run the SQL script to insert categories and skills.</p>
+          <p>Please check your database connection.</p>
         </div>
       ) : (
         categories.map(category => (
@@ -116,7 +151,7 @@ function Interests() {
                     onClick={() => toggleSkill(skill.name)}
                     style={selectedSkills.includes(skill.name) ? styles.skillSelected : styles.skillButton}
                   >
-                    <span>{skill.icon}</span> {skill.name}
+                    <span>{skill.icon || '📚'}</span> {skill.name}
                   </button>
                 ))
               )}

@@ -2,13 +2,18 @@ import React, { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
 import Interests from './Interests'
 
-function Dashboard() {
+function Dashboard({ onLogout }) {
   const [user, setUser] = useState(null)
   const [profile, setProfile] = useState(null)
   const [showInterests, setShowInterests] = useState(false)
   const [searchTerm, setSearchTerm] = useState('')
+  const [searchTermSkill, setSearchTermSkill] = useState('')
   const [allSkills, setAllSkills] = useState([])
+  const [allCategories, setAllCategories] = useState([])
   const [searchResults, setSearchResults] = useState([])
+  const [searchResultsSkill, setSearchResultsSkill] = useState([])
+  const [showAddInterest, setShowAddInterest] = useState(false)
+  const [showAddSkill, setShowAddSkill] = useState(false)
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -16,6 +21,7 @@ function Dashboard() {
       loadProfile(data.user?.id)
     })
     fetchAllSkills()
+    fetchAllCategories()
   }, [])
 
   const fetchAllSkills = async () => {
@@ -24,6 +30,15 @@ function Dashboard() {
       .select('*')
     if (data) {
       setAllSkills(data)
+    }
+  }
+
+  const fetchAllCategories = async () => {
+    const { data } = await supabase
+      .from('categories')
+      .select('*')
+    if (data) {
+      setAllCategories(data)
     }
   }
 
@@ -36,38 +51,120 @@ function Dashboard() {
     
     if (data) {
       setProfile(data)
-      // After loading profile, check if user is admin
       if (data.role === 'admin') {
         window.location.href = '/admin'
         return
       }
-      // Check if user has interests selected
-      if (!data.skills_wanted || data.skills_wanted.length === 0) {
-        setShowInterests(true)
-      }
+      const needsInterests = data.skills_wanted === null || data.skills_wanted === undefined
+      setShowInterests(needsInterests)
     }
   }
 
-  // Search skills when searchTerm changes
+  // Search for Interests by CATEGORY
   useEffect(() => {
     if (searchTerm.trim() === '') {
       setSearchResults([])
     } else {
+      // First find categories that match the search term
+      const matchingCategories = allCategories.filter(cat =>
+        cat.name.toLowerCase().includes(searchTerm.toLowerCase())
+      )
+      
+      // Then find skills from those categories
+      const categoryNames = matchingCategories.map(cat => cat.name)
       const results = allSkills.filter(skill =>
-        skill.name.toLowerCase().includes(searchTerm.toLowerCase())
+        categoryNames.includes(skill.category)
       )
       setSearchResults(results)
     }
-  }, [searchTerm, allSkills])
+  }, [searchTerm, allSkills, allCategories])
+
+  // Search for Skills Offered by CATEGORY
+  useEffect(() => {
+    if (searchTermSkill.trim() === '') {
+      setSearchResultsSkill([])
+    } else {
+      // First find categories that match the search term
+      const matchingCategories = allCategories.filter(cat =>
+        cat.name.toLowerCase().includes(searchTermSkill.toLowerCase())
+      )
+      
+      // Then find skills from those categories
+      const categoryNames = matchingCategories.map(cat => cat.name)
+      const results = allSkills.filter(skill =>
+        categoryNames.includes(skill.category)
+      )
+      setSearchResultsSkill(results)
+    }
+  }, [searchTermSkill, allSkills, allCategories])
 
   const handleLogout = async () => {
     await supabase.auth.signOut()
-    window.location.href = '/'
+    if (onLogout) {
+      onLogout()
+    } else {
+      window.location.href = '/'
+    }
   }
 
-  // Show Interests page if no interests selected
+  const addInterest = async (skillName) => {
+    const currentInterests = profile?.skills_wanted || []
+    if (!currentInterests.includes(skillName)) {
+      const newInterests = [...currentInterests, skillName]
+      const { data: { user } } = await supabase.auth.getUser()
+      await supabase
+        .from('profiles')
+        .update({ skills_wanted: newInterests })
+        .eq('id', user.id)
+      
+      setProfile({ ...profile, skills_wanted: newInterests })
+      setShowAddInterest(false)
+      setSearchTerm('')
+    }
+  }
+
+  const addSkill = async (skillName) => {
+    const currentSkills = profile?.skills_offered || []
+    if (!currentSkills.includes(skillName)) {
+      const newSkills = [...currentSkills, skillName]
+      const { data: { user } } = await supabase.auth.getUser()
+      await supabase
+        .from('profiles')
+        .update({ skills_offered: newSkills })
+        .eq('id', user.id)
+      
+      setProfile({ ...profile, skills_offered: newSkills })
+      setShowAddSkill(false)
+      setSearchTermSkill('')
+    }
+  }
+
+  const removeInterest = async (skillName) => {
+    const currentInterests = profile?.skills_wanted || []
+    const newInterests = currentInterests.filter(s => s !== skillName)
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase
+      .from('profiles')
+      .update({ skills_wanted: newInterests })
+      .eq('id', user.id)
+    
+    setProfile({ ...profile, skills_wanted: newInterests })
+  }
+
+  const removeSkill = async (skillName) => {
+    const currentSkills = profile?.skills_offered || []
+    const newSkills = currentSkills.filter(s => s !== skillName)
+    const { data: { user } } = await supabase.auth.getUser()
+    await supabase
+      .from('profiles')
+      .update({ skills_offered: newSkills })
+      .eq('id', user.id)
+    
+    setProfile({ ...profile, skills_offered: newSkills })
+  }
+
   if (showInterests) {
-    return <Interests />
+    return <Interests onComplete={() => setShowInterests(false)} />
   }
 
   return (
@@ -79,48 +176,136 @@ function Dashboard() {
       
       <div style={styles.content}>
         <h2>Welcome, {profile?.username || user?.email}!</h2>
-        
-        {/* Search Bar Section */}
-        <div style={styles.searchSection}>
-          <input
-            type="text"
-            placeholder="🔍 Search for skills to learn..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            style={styles.searchInput}
-          />
-          
-          {/* Search Results */}
-          {searchTerm && (
-            <div style={styles.searchResults}>
-              <h3>Search Results for "{searchTerm}"</h3>
-              {searchResults.length === 0 ? (
-                <p style={styles.noResults}>No skills found</p>
-              ) : (
-                <div style={styles.resultsGrid}>
-                  {searchResults.map(skill => (
-                    <div key={skill.id} style={styles.resultCard}>
-                      <span style={styles.resultIcon}>{skill.icon || '📚'}</span>
-                      <div>
-                        <div style={styles.resultName}>{skill.name}</div>
-                        <div style={styles.resultCategory}>{skill.category}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
 
+        {/* Skills You Offer Section */}
         <div style={styles.section}>
-          <h3>Your Skills</h3>
+          <div style={styles.sectionHeader}>
+            <h3>Skills You Offer</h3>
+            <button 
+              onClick={() => setShowAddSkill(!showAddSkill)} 
+              style={styles.addButton}
+            >
+              + Add Skill
+            </button>
+          </div>
           <div style={styles.skillBox}>
-            <p>Offered: {profile?.skills_offered?.join(', ') || 'None yet'}</p>
-            <p>Wanted: {profile?.skills_wanted?.join(', ') || 'None yet'}</p>
+            {profile?.skills_offered?.length > 0 ? (
+              <div style={styles.skillsList}>
+                {profile.skills_offered.map(skill => (
+                  <span key={skill} style={styles.skillTag}>
+                    {skill}
+                    <button 
+                      onClick={() => removeSkill(skill)}
+                      style={styles.removeTag}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p style={styles.noSkillsText}>No skills offered yet. Click "Add Skill" to list what you can teach.</p>
+            )}
           </div>
         </div>
 
+        {/* Add Skill Search - by Category */}
+        {showAddSkill && (
+          <div style={styles.addInterestSection}>
+            <input
+              type="text"
+              placeholder="🔍 Search by category (e.g., Coding, Music, Fitness)..."
+              value={searchTermSkill}
+              onChange={(e) => setSearchTermSkill(e.target.value)}
+              style={styles.searchInput}
+            />
+            {searchTermSkill && (
+              <div style={styles.searchResultsCompact}>
+                {searchResultsSkill.length === 0 ? (
+                  <p style={styles.noResults}>No skills found in this category</p>
+                ) : (
+                  searchResultsSkill.map(skill => (
+                    <div 
+                      key={skill.id} 
+                      style={styles.skillOption}
+                      onClick={() => addSkill(skill.name)}
+                    >
+                      <span>{skill.icon || '📚'}</span>
+                      <span style={styles.skillOptionName}>{skill.name}</span>
+                      <span style={styles.skillOptionCategory}>{skill.category}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Skills You Want to Learn Section */}
+        <div style={styles.section}>
+          <div style={styles.sectionHeader}>
+            <h3>Skills You Want to Learn</h3>
+            <button 
+              onClick={() => setShowAddInterest(!showAddInterest)} 
+              style={styles.addButton}
+            >
+              + Add Interest
+            </button>
+          </div>
+          <div style={styles.skillBox}>
+            {profile?.skills_wanted?.length > 0 ? (
+              <div style={styles.skillsList}>
+                {profile.skills_wanted.map(skill => (
+                  <span key={skill} style={styles.skillTag}>
+                    {skill}
+                    <button 
+                      onClick={() => removeInterest(skill)}
+                      style={styles.removeTag}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p style={styles.noSkillsText}>No interests added yet. Click "Add Interest" to find skill partners.</p>
+            )}
+          </div>
+        </div>
+
+        {/* Add Interest Search - by Category */}
+        {showAddInterest && (
+          <div style={styles.addInterestSection}>
+            <input
+              type="text"
+              placeholder="🔍 Search by category (e.g., Coding, Music, Fitness)..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              style={styles.searchInput}
+            />
+            {searchTerm && (
+              <div style={styles.searchResultsCompact}>
+                {searchResults.length === 0 ? (
+                  <p style={styles.noResults}>No skills found in this category</p>
+                ) : (
+                  searchResults.map(skill => (
+                    <div 
+                      key={skill.id} 
+                      style={styles.skillOption}
+                      onClick={() => addInterest(skill.name)}
+                    >
+                      <span>{skill.icon || '📚'}</span>
+                      <span style={styles.skillOptionName}>{skill.name}</span>
+                      <span style={styles.skillOptionCategory}>{skill.category}</span>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Your Stats Section */}
         <div style={styles.section}>
           <h3>Your Stats</h3>
           <div style={styles.stats}>
@@ -169,7 +354,65 @@ const styles = {
     maxWidth: '800px',
     margin: '0 auto',
   },
-  searchSection: {
+  section: {
+    background: 'white',
+    padding: '20px',
+    borderRadius: '10px',
+    marginBottom: '20px',
+  },
+  sectionHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '15px',
+  },
+  addButton: {
+    padding: '8px 16px',
+    background: '#667eea',
+    color: 'white',
+    border: 'none',
+    borderRadius: '5px',
+    cursor: 'pointer',
+    fontSize: '14px',
+  },
+  skillBox: {
+    background: '#f8f9fa',
+    padding: '15px',
+    borderRadius: '8px',
+  },
+  skillsList: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '10px',
+  },
+  skillTag: {
+    background: '#667eea',
+    color: 'white',
+    padding: '6px 12px',
+    borderRadius: '20px',
+    fontSize: '14px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  removeTag: {
+    background: 'none',
+    border: 'none',
+    color: 'white',
+    cursor: 'pointer',
+    fontSize: '16px',
+    fontWeight: 'bold',
+    padding: '0 4px',
+  },
+  noSkillsText: {
+    color: '#999',
+    textAlign: 'center',
+    padding: '10px',
+  },
+  addInterestSection: {
+    background: 'white',
+    borderRadius: '10px',
+    padding: '15px',
     marginBottom: '20px',
   },
   searchInput: {
@@ -179,38 +422,26 @@ const styles = {
     border: '2px solid #e0e0e0',
     borderRadius: '25px',
     outline: 'none',
-    transition: 'border-color 0.3s',
   },
-  searchResults: {
-    background: 'white',
-    borderRadius: '10px',
-    padding: '15px',
+  searchResultsCompact: {
     marginTop: '10px',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+    maxHeight: '300px',
+    overflowY: 'auto',
   },
-  resultsGrid: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    marginTop: '10px',
-  },
-  resultCard: {
+  skillOption: {
     display: 'flex',
     alignItems: 'center',
-    gap: '15px',
+    gap: '12px',
     padding: '10px',
-    background: '#f8f9fa',
-    borderRadius: '8px',
+    borderBottom: '1px solid #eee',
+    cursor: 'pointer',
     transition: 'background 0.2s',
   },
-  resultIcon: {
-    fontSize: '24px',
-  },
-  resultName: {
+  skillOptionName: {
     fontWeight: 'bold',
-    fontSize: '16px',
+    flex: 1,
   },
-  resultCategory: {
+  skillOptionCategory: {
     fontSize: '12px',
     color: '#666',
   },
@@ -218,17 +449,6 @@ const styles = {
     textAlign: 'center',
     color: '#999',
     padding: '20px',
-  },
-  section: {
-    background: 'white',
-    padding: '20px',
-    borderRadius: '10px',
-    marginBottom: '20px',
-  },
-  skillBox: {
-    background: '#f8f9fa',
-    padding: '15px',
-    borderRadius: '8px',
   },
   stats: {
     display: 'flex',
